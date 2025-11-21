@@ -1,0 +1,221 @@
+module morse_top_extended(
+    input  wire CLOCK_50,
+    input  wire KEY0,       // reset (active low)
+    input  wire KEY1,       // stop button
+    input  wire [1:0] SW,   // speed control
+    output wire LEDR0,
+    output wire [6:0] HEX0,
+    output wire [6:0] HEX1
+);
+
+//=====================================================
+// RESET (active low)
+//=====================================================
+wire reset_n = KEY0;
+
+//=====================================================
+// SPEED CONTROL
+//=====================================================
+reg [25:0] UNIT;
+always @(*) begin
+    case(SW)
+        2'b00: UNIT = 2_500_000;   // 50 ms
+        2'b01: UNIT = 5_000_000;   // 100 ms
+        2'b10: UNIT = 10_000_000;  // 200 ms
+        2'b11: UNIT = 20_000_000;  // 400 ms
+    endcase
+end
+
+//=====================================================
+// MESSAGE ROM
+//=====================================================
+reg [7:0] message [0:15];
+initial begin
+    message[0]  = "H";
+    message[1]  = "E";
+    message[2]  = "L";
+    message[3]  = "L";
+    message[4]  = "O";
+    message[5]  = " ";
+    message[6]  = "W";
+    message[7]  = "O";
+    message[8]  = "R";
+    message[9]  = "L";
+    message[10] = "D";
+    message[11] = " ";
+    message[12] = " ";
+    message[13] = " ";
+    message[14] = " ";
+    message[15] = " ";
+end
+
+//=====================================================
+// MORSE PATTERNS
+//=====================================================
+function [7:0] morse_pattern(input [7:0] c);
+    case(c)
+        "A": morse_pattern = 8'b01;
+        "B": morse_pattern = 8'b1000;
+        "C": morse_pattern = 8'b1010;
+        "D": morse_pattern = 8'b100;
+        "E": morse_pattern = 8'b0;
+        "F": morse_pattern = 8'b0010;
+        "G": morse_pattern = 8'b110;
+        "H": morse_pattern = 8'b0000;
+        "I": morse_pattern = 8'b00;
+        "J": morse_pattern = 8'b0111;
+        "K": morse_pattern = 8'b101;
+        "L": morse_pattern = 8'b0100;
+        "M": morse_pattern = 8'b11;
+        "N": morse_pattern = 8'b10;
+        "O": morse_pattern = 8'b111;
+        "P": morse_pattern = 8'b0110;
+        "Q": morse_pattern = 8'b1101;
+        "R": morse_pattern = 8'b010;
+        "S": morse_pattern = 8'b000;
+        "T": morse_pattern = 8'b1;
+        "U": morse_pattern = 8'b001;
+        "V": morse_pattern = 8'b0001;
+        "W": morse_pattern = 8'b011;
+        "X": morse_pattern = 8'b1001;
+        "Y": morse_pattern = 8'b1011;
+        "Z": morse_pattern = 8'b1100;
+        default: morse_pattern = 0;
+    endcase
+endfunction
+
+//=====================================================
+// MORSE LENGTH
+//=====================================================
+function [2:0] morse_len(input [7:0] c);
+    case(c)
+        "E","T": morse_len = 1;
+        "A","I","M","N","D","U","W": morse_len = 2;
+        "G","K","O","R","S": morse_len = 3;
+        default: morse_len = 4;
+    endcase
+endfunction
+
+//=====================================================
+// FSM REGISTERS
+//=====================================================
+reg [3:0] state = 0;
+reg [25:0] cnt = 0;
+reg [2:0] sym_pos = 0;
+reg [4:0] msg_ptr = 0;
+reg led = 0;
+reg [7:0] pattern;
+reg stop_output = 0; // controlled by KEY1
+
+//=====================================================
+// STOP BUTTON (KEY1)
+//=====================================================
+always @(posedge CLOCK_50 or negedge reset_n) begin
+    if(!reset_n) begin
+        stop_output <= 0;
+    end else if(!KEY1) begin
+        stop_output <= 1;  // pressing KEY1 stops output
+    end
+end
+
+//=====================================================
+// MORSE FSM
+//=====================================================
+always @(posedge CLOCK_50 or negedge reset_n) begin
+    if(!reset_n) begin
+        state <= 0;
+        cnt <= 0;
+        sym_pos <= 0;
+        msg_ptr <= 0;
+        led <= 0;
+        pattern <= 0;
+    end else if(!stop_output) begin
+        case(state)
+            // SYMBOL ON
+            0: begin
+                if(message[msg_ptr] != " ") begin
+                    pattern <= morse_pattern(message[msg_ptr]);
+                    led <= pattern[sym_pos];
+                    if(cnt < ((pattern[sym_pos] ? 3*UNIT : UNIT) - 1))
+                        cnt <= cnt + 1;
+                    else begin
+                        cnt <= 0;
+                        state <= 1;
+                    end
+                end else begin
+                    led <= 0;
+                    cnt <= 0;
+                    state <= 4;   // word gap
+                end
+            end
+            // SYMBOL GAP
+            1: begin
+                led <= 0;
+                if(cnt < UNIT-1)
+                    cnt <= cnt + 1;
+                else begin
+                    cnt <= 0;
+                    state <= 2;
+                end
+            end
+            // NEXT SYMBOL OR CHARACTER GAP
+            2: begin
+                if(sym_pos < morse_len(message[msg_ptr]) - 1) begin
+                    sym_pos <= sym_pos + 1;
+                    state <= 0;
+                end else begin
+                    sym_pos <= 0;
+                    state <= 3;
+                end
+            end
+            // CHAR GAP
+            3: begin
+                led <= 0;
+                if(cnt < 2*UNIT-1)
+                    cnt <= cnt + 1;
+                else begin
+                    cnt <= 0;
+                    msg_ptr <= (msg_ptr == 15 ? 0 : msg_ptr + 1); // continuous loop
+                    state <= 0;
+                end
+            end
+            // WORD GAP
+            4: begin
+                led <= 0;
+                if(cnt < 7*UNIT-1)
+                    cnt <= cnt + 1;
+                else begin
+                    cnt <= 0;
+                    msg_ptr <= (msg_ptr == 15 ? 0 : msg_ptr + 1); // continuous loop
+                    state <= 0;
+                end
+            end
+        endcase
+    end
+end
+
+//=====================================================
+// OUTPUTS
+//=====================================================
+assign LEDR0 = stop_output ? 0 : led;
+assign HEX0  = stop_output ? 7'b1111111 : seg7(message[msg_ptr]);
+assign HEX1  = 7'b1111111;
+
+//=====================================================
+// HEX7 DECODER
+//=====================================================
+function [6:0] seg7(input [7:0] c);
+    case(c)
+        "H": seg7 = 7'b0001001;
+        "E": seg7 = 7'b0000110;
+        "L": seg7 = 7'b1000111;
+        "O": seg7 = 7'b1000000;
+        "W": seg7 = 7'b0101010;
+        "R": seg7 = 7'b0101111;
+        "D": seg7 = 7'b0100001;
+        " ": seg7 = 7'b1111111;
+        default: seg7 = 7'b1111111;
+    endcase
+endfunction
+
+endmodule

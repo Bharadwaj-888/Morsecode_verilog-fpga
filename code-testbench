@@ -1,0 +1,62 @@
+`timescale 1ns/1ps
+
+module tb_morse_top_extended;
+
+    // Inputs
+    reg CLOCK_50;
+    reg KEY0;
+    reg [1:0] SW;
+
+    // Outputs
+    wire LEDR0;
+    wire [6:0] HEX0;
+    wire [6:0] HEX1;
+
+    // Additional wire to monitor 'done' status
+    wire done;
+
+    // Instantiate the design
+    morse_top_extended uut (
+        .CLOCK_50(CLOCK_50),
+        .KEY0(KEY0),
+        .SW(SW),
+        .LEDR0(LEDR0),
+        .HEX0(HEX0),
+        .HEX1(HEX1)
+    );
+
+    // Generate clock: 50 MHz
+    initial CLOCK_50 = 0;
+    always #10 CLOCK_50 = ~CLOCK_50; // period = 20 ns
+
+    // Forced test stimulus
+    initial begin
+        // Apply reset
+        KEY0 = 0; 
+        SW = 2'b01; // Speed = 100 ms per dot
+        #50;
+        KEY0 = 1; // release reset
+
+        // Wait for message completion by checking HEX0 (optional)
+        // Instead, we can monitor done flag internally
+    end
+
+    // Optional: extract done from the module using hierarchical reference
+    // In ModelSim/Quartus simulation, you can reference internal signals
+    // Assuming your module has reg 'done', we can access:
+    assign done = uut.done;
+
+    // Automatically stop simulation when done is high
+    always @(posedge CLOCK_50) begin
+        if (done) begin
+            $display("Simulation completed at time %0t ns", $time);
+            $stop;
+        end
+    end
+
+    // Monitor outputs for debugging
+    initial begin
+        $monitor("Time: %0t | LEDR0: %b | HEX0: %b", $time, LEDR0, HEX0);
+    end
+
+endmodule
